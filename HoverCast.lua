@@ -14,8 +14,13 @@
 -- beta, 1.60.1). The macro list IS the state: anything named "HC <spell>"
 -- containing @mouseover is ours.
 --
--- /hover               open the window
--- /hover Holy Light    make that macro and put it on the cursor
+-- Spells with ranks ask which one you want; "Max rank" leaves the rank off so
+-- the macro always casts your highest. A specific rank uses the same form the
+-- spellbook shift-click writes into macros: Holy Light(Rank 1).
+--
+-- /hover                        open the window
+-- /hover Holy Light             make that macro and put it on the cursor
+-- /hover Holy Light(Rank 1)     same, for a specific rank
 -- ============================================================================
 
 local PREFIX = "|cff4cc776HoverCast|r: "
@@ -40,12 +45,29 @@ local function isHelpful(spellID)
 	return ok and v and true or false
 end
 
+local function subtext(sub, id)
+	if (not sub or sub == "") and id and C_Spell and C_Spell.GetSpellSubtext then
+		local ok, v = pcall(C_Spell.GetSpellSubtext, id)
+		if ok and type(v) == "string" then sub = v end
+	end
+	return sub or ""
+end
+
+-- One entry per spell name. The spellbook lists every rank you know (Blizzard's
+-- "show all ranks" option only filters its own display), in ascending order, so
+-- each entry gathers its ranks here.
 local function playerSpells()
-	local out, seen = {}, {}
-	local function add(name, icon, id)
-		if not name or name == "" or seen[name] then return end
-		seen[name] = true
-		out[#out + 1] = { name = name, icon = icon, id = id, helpful = isHelpful(id) }
+	local out, byName = {}, {}
+	local function add(name, icon, id, sub)
+		if not name or name == "" then return end
+		local e = byName[name]
+		if not e then
+			e = { name = name, icon = icon, id = id, all = {} }
+			byName[name] = e
+			out[#out + 1] = e
+		end
+		e.all[#e.all + 1] = { id = id, sub = subtext(sub, id) }
+		e.id = id or e.id   -- keep the highest rank's id
 	end
 
 	if C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines and Enum and Enum.SpellBookSpellBank then
@@ -59,11 +81,26 @@ local function playerSpells()
 					local okI, info = pcall(C_SpellBook.GetSpellBookItemInfo, slot, bank)
 					if okI and info and not info.isPassive and not info.isOffSpec
 						and (spellType == nil or info.itemType == spellType) then
-						add(info.name, info.iconID, info.spellID or info.actionID)
+						add(info.name, info.iconID, info.spellID or info.actionID, info.subName)
 					end
 				end
 			end
 		end
+	end
+
+	for _, e in ipairs(out) do
+		e.helpful = isHelpful(e.id)
+		e.ranks = {}
+		if #e.all > 1 then
+			for i, r in ipairs(e.all) do
+				-- subtext should read "Rank N"; if it hasn't loaded yet, book order is rank order
+				r.n = tonumber(r.sub:match("%d+")) or i
+				if not r.sub:match("%d") then r.sub = "Rank " .. r.n end
+				e.ranks[#e.ranks + 1] = r
+			end
+			table.sort(e.ranks, function(a, b) return a.n < b.n end)
+		end
+		e.all = nil
 	end
 
 	-- helpful spells first, then alphabetical
@@ -77,7 +114,26 @@ end
 -- ---------------------------------------------------------------------------
 -- macros and bindings
 -- ---------------------------------------------------------------------------
-local function macroName(spell) return (NAME_PREFIX .. spell):sub(1, 16) end
+-- "Holy Light(Rank 1)" -> "Holy Light", "Rank 1"
+local function splitRank(spell)
+	local base, sub = spell:match("^(.-)%s*%((.-)%)$")
+	if base and base ~= "" then return base, sub end
+	return spell, nil
+end
+
+-- Macro names cap at 16 characters. Max rank: "HC Holy Light".
+-- A specific rank: "HC Holy Light r1", or initials when the name won't fit
+-- ("HC LHW r2" for Lesser Healing Wave, "HC BoM r3" for Blessing of Might).
+local function macroName(spell)
+	local base, sub = splitRank(spell)
+	if not sub then return (NAME_PREFIX .. spell):sub(1, 16) end
+	local suffix = " r" .. (sub:match("%d+") or sub:sub(1, 2))
+	local room = 16 - #NAME_PREFIX - #suffix
+	if #base > room then
+		base = (base:gsub("(%S)%S*%s*", "%1")):sub(1, room)
+	end
+	return NAME_PREFIX .. base .. suffix
+end
 
 local function macroBody(spell, mode)
 	return "#showtooltip " .. spell .. "\n/cast " .. mode.cond .. " " .. spell
@@ -132,6 +188,11 @@ local function createMacro(spell, mode, icon)
 	local index = GetMacroIndexByName(name)
 	local ok, err, updated
 	if index and index > 0 then
+		local _, _, oldBody = GetMacroInfo(index)
+		local oldSpell = oldBody and oldBody:match("#showtooltip ([^\n]+)")
+		if oldSpell and oldSpell ~= spell then
+			return false, "the macro name \"" .. name .. "\" is already used by " .. oldSpell .. "."
+		end
 		ok, err = pcall(EditMacro, index, name, icon, body)
 		updated = true
 	else
@@ -267,6 +328,7 @@ local function build()
 			if self.spell then
 				win.selected = self.spell.name
 				win.selectedIcon = self.spell.icon
+				win.selectedEntry = self.spell
 				win:RenderSpells(); win:RenderPick()
 			end
 		end)
@@ -293,12 +355,23 @@ local function build()
 	win.previewText:SetPoint("TOPLEFT", 8, -6); win.previewText:SetPoint("RIGHT", -8, 0)
 	win.previewText:SetJustifyH("LEFT"); win.previewText:SetFont(STANDARD_TEXT_FONT, 10)
 
-	local create = flatButton(win, "Create macro", 130, 26, function()
-		local ok, msg = createMacro(win.selected, MODES[win.mode], win.selectedIcon)
+	local function make(spell)
+		win.rankPick:Hide()
+		local ok, msg = createMacro(spell, MODES[win.mode], win.selectedIcon)
 		status(msg, ok)
 		if ok then win:RenderMacros() end
+	end
+
+	local create = flatButton(win, "Create macro", 130, 26, function()
+		local e = win.selectedEntry
+		if e and e.name == win.selected and #e.ranks > 1 then
+			win:AskRank(e)
+		else
+			make(win.selected)
+		end
 	end)
 	create:SetPoint("TOPLEFT", preview, "BOTTOMLEFT", 0, -8)
+	win.createBtn = create
 	create:SetBackdropColor(ACCENT[1], ACCENT[2], ACCENT[3], 0.18)
 	win.status = win:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	win.status:SetPoint("LEFT", create, "RIGHT", 10, 0); win.status:SetPoint("RIGHT", win, "RIGHT", -14, 0)
@@ -348,6 +421,50 @@ local function build()
 	win.emptyMacros:SetPoint("TOPLEFT", mlist, "TOPLEFT", 4, -6)
 	win.emptyMacros:SetText("None yet.")
 
+	-- rank chooser ---------------------------------------------------------
+	-- Covers the window; a click on the dimmed area outside the panel cancels.
+	local PER_ROW, RB_W, RB_H = 5, 76, 22
+	local pick = CreateFrame("Frame", nil, win)
+	pick:SetAllPoints(); pick:SetFrameLevel(win:GetFrameLevel() + 30)
+	pick:EnableMouse(true); pick:EnableMouseWheel(true); pick:Hide()
+	pick:SetScript("OnMouseDown", function(self) self:Hide() end)
+	pick:SetScript("OnMouseWheel", function() end)
+	local dim = tex(pick, "BACKGROUND", 0, 0, 0, 0.6); dim:SetAllPoints()
+	win.rankPick = pick
+
+	local panel = CreateFrame("Frame", nil, pick, "BackdropTemplate")
+	panel:SetWidth(432); panel:SetPoint("CENTER"); panel:EnableMouse(true)
+	panel:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+	panel:SetBackdropColor(0.07, 0.08, 0.10, 1); panel:SetBackdropBorderColor(ACCENT[1], ACCENT[2], ACCENT[3], 0.7)
+	panel.title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	panel.title:SetPoint("TOPLEFT", 14, -12)
+	panel.max = flatButton(panel, "Max rank  |cff909090(always casts your highest)|r", 404, 28)
+	panel.max:SetPoint("TOPLEFT", 14, -36)
+	panel.max:SetBackdropColor(ACCENT[1], ACCENT[2], ACCENT[3], 0.18)
+	local hint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+	hint:SetPoint("TOPLEFT", 14, -76); hint:SetText("or a specific rank:")
+	panel.cancel = flatButton(panel, "Cancel", 80, 22, function() pick:Hide() end)
+	panel.rankBtns = {}
+
+	function win:AskRank(e)
+		panel.title:SetText(e.name .. ": which rank?")
+		panel.max:SetScript("OnClick", function() make(e.name) end)
+		for i, r in ipairs(e.ranks) do
+			local b = panel.rankBtns[i]
+			if not b then b = flatButton(panel, "", RB_W, RB_H); panel.rankBtns[i] = b end
+			local col, row = (i - 1) % PER_ROW, math.floor((i - 1) / PER_ROW)
+			b:ClearAllPoints(); b:SetPoint("TOPLEFT", 14 + col * (RB_W + 6), -92 - row * (RB_H + 6))
+			b.text:SetText(r.sub)
+			b:SetScript("OnClick", function() make(e.name .. "(" .. r.sub .. ")") end)
+			b:Show()
+		end
+		for i = #e.ranks + 1, #panel.rankBtns do panel.rankBtns[i]:Hide() end
+		local y = 92 + math.ceil(#e.ranks / PER_ROW) * (RB_H + 6) + 6
+		panel.cancel:ClearAllPoints(); panel.cancel:SetPoint("TOPRIGHT", -14, -y)
+		panel:SetHeight(y + RB_H + 12)
+		pick:Show()
+	end
+
 	-- renderers ------------------------------------------------------------
 	function win:RenderSpells()
 		local f = strlower(self.search:GetText() or "")
@@ -363,8 +480,10 @@ local function build()
 			if s then
 				r.icon:SetTexture(s.icon or 134400)
 				r.label:SetText(s.name)
-				r.tag:SetText(s.helpful and "|cff4cc776helpful|r" or "")
+				r.tag:SetText((#s.ranks > 1 and ("|cff707070" .. #s.ranks .. " ranks|r   ") or "")
+					.. (s.helpful and "|cff4cc776helpful|r" or ""))
 				local sel = (s.name == self.selected)
+				if sel then self.selectedEntry = s end
 				r.bg:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], sel and 0.22 or 0)
 				r:Show()
 			else
@@ -379,6 +498,8 @@ local function build()
 		self.modeBtn.text:SetText(mode.label)
 		local spell = self.selected or "<spell>"
 		self.previewText:SetText("|cff808080" .. macroBody(spell, mode):gsub("\n", "|n") .. "|r")
+		local e = self.selectedEntry
+		self.createBtn.text:SetText((e and e.name == self.selected and #e.ranks > 1) and "Create macro..." or "Create macro")
 	end
 
 	-- cached=true re-draws the last scan (mouse wheel) instead of re-reading 150 macro slots
@@ -391,7 +512,8 @@ local function build()
 			local m = ms[off + i]
 			if m then
 				r.icon:SetTexture(m.icon or 134400)
-				r.label:SetText(m.spell)
+				local base, sub = splitRank(m.spell)
+				r.label:SetText(sub and (base .. "  |cff808080" .. sub .. "|r") or m.spell)
 				r.del.macro = m
 				r.pick.macro = m
 				r:Show()
@@ -409,6 +531,7 @@ local function build()
 		self:RenderSpells(); self:RenderPick(); self:RenderMacros()
 	end
 
+	win:SetScript("OnHide", function(self) self.rankPick:Hide() end)
 	win:SetScript("OnShow", function(self)
 		self:Refresh()
 		-- fit the window to the macro list's bottom edge, whatever the font heights came out as
@@ -427,9 +550,17 @@ do
 	local f = CreateFrame("Frame")
 	f:RegisterEvent("SPELLS_CHANGED")
 	f:RegisterEvent("UPDATE_MACROS")
+	pcall(f.RegisterEvent, f, "SPELL_TEXT_UPDATE")   -- rank text loads late sometimes
+	local pending
 	f:SetScript("OnEvent", function(_, event)
 		if not (win and win:IsShown()) then return end
-		if event == "SPELLS_CHANGED" then win:Refresh() else win:RenderMacros() end
+		if event == "UPDATE_MACROS" then win:RenderMacros(); return end
+		if pending then return end
+		pending = true
+		C_Timer.After(0.3, function()
+			pending = false
+			if win:IsShown() then win:Refresh() end
+		end)
 	end)
 end
 
