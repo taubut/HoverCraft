@@ -1,0 +1,8 @@
+## Interface: 16001, 120100
+## Title: |cff4cc776HoverCast|r
+## Notes: Make mouseover macros in two clicks: pick a spell, press a key. Writes a real character macro and a real keybinding, so nothing depends on addon saved settings. /hover
+## Author: taubut
+## Version: 1.0.0
+## IconTexture: Interface\Icons\Spell_Holy_HolyBolt
+
+HoverCast.lua
