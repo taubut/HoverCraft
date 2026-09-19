@@ -2,7 +2,8 @@
 ## Title: |cff4cc776HoverCast|r
 ## Notes: Mouseover macros without typing them: pick a spell, click Create, and the macro lands on your cursor to drop onto an action bar. /hover
 ## Author: taubut
-## Version: 1.2.0
+## Version: 1.3.0
 ## IconTexture: Interface\Icons\Spell_Holy_HolyBolt
+## AddonCompartmentFunc: HoverCast_OnAddonCompartmentClick
 
 HoverCast.lua

@@ -18,7 +18,14 @@
 -- the macro always casts your highest. A specific rank uses the same form the
 -- spellbook shift-click writes into macros: Holy Light(Rank 1).
 --
--- /hover                        open the window
+-- Click one of your macros in the list to load its spell and targeting back
+-- into the editor. Picking a damage spell switches to enemy targeting (and a
+-- heal switches back) so a new macro starts out pointed the right way.
+--
+-- "Also start auto-attack" adds /startattack [harm,nodead] above the cast: it
+-- only fires when your target is a live enemy, so heals stay error-free.
+--
+-- /hover                        open the window (also in the addon menu by the minimap)
 -- /hover Holy Light             make that macro and put it on the cursor
 -- /hover Holy Light(Rank 1)     same, for a specific rank
 -- ============================================================================
@@ -28,20 +35,64 @@ local NAME_PREFIX = "HC "
 local MAX_SCAN = 150          -- 120 account + up to 30 character macro slots
 
 local MODES = {
-	{ key = "heal", label = "Friendly mouseover > target > you",
+	{ key = "heal", short = "heal", friendly = true,
+	  label = "Friendly mouseover > target > you",
+	  best = "most heals and buffs",
+	  help = "Mouse over a friendly player to cast on them. With nobody friendly under your mouse it goes to your target if they're friendly, otherwise to you, so it always casts.",
 	  cond = "[@mouseover,help,nodead][@target,help,nodead][@player]" },
-	{ key = "help", label = "Friendly mouseover > target",
+	-- target the boss and it heals whoever the boss is hitting
+	{ key = "tank", short = "tank", friendly = true,
+	  label = "Mouseover > target > boss's target (tank) > you",
+	  best = "tank healing",
+	  help = "Like heal, with one extra step: if your target is an enemy, it goes to whoever that enemy is attacking. Target the boss and it heals the tank; mouse over anyone else to heal them instead.",
+	  cond = "[@mouseover,help,nodead][@target,help,nodead][@targettarget,help,nodead][@player]" },
+	{ key = "help", short = "friendly", friendly = true,
+	  label = "Friendly mouseover > target",
+	  best = "buffs you aim yourself",
+	  help = "Mouse over a friendly player to cast on them, otherwise it goes to your target like a normal cast. No extra fallback to you.",
 	  cond = "[@mouseover,help,nodead][]" },
-	{ key = "any",  label = "Any mouseover > target (dispels, damage)",
+	{ key = "any",  short = "any",
+	  label = "Any mouseover > target (dispels)",
+	  best = "dispels that work on friends and enemies",
+	  help = "Casts on whoever is under your mouse, friend or enemy, otherwise on your target.",
 	  cond = "[@mouseover,exists,nodead][]" },
+	{ key = "harm", short = "enemy",
+	  label = "Enemy mouseover > target (damage)",
+	  best = "damage spells, DoTs, interrupts",
+	  help = "Mouse over an enemy to cast on it without changing your target, otherwise it goes to your target.",
+	  cond = "[@mouseover,harm,nodead][]" },
+	{ key = "rez",  short = "resurrect", friendly = true,
+	  label = "Dead friendly mouseover > target (resurrect)",
+	  best = "resurrect spells",
+	  help = "Mouse over a dead friendly player to cast on them, otherwise it goes to your target. The other options skip dead players, so resurrect spells need this one.",
+	  cond = "[@mouseover,help,dead][]" },
 }
+local MODE_INDEX = {}
+for i, m in ipairs(MODES) do MODE_INDEX[m.key] = i end
+
+-- Which mode a macro body was written with (nil if it was edited by hand).
+local function modeOf(body)
+	for i, m in ipairs(MODES) do
+		if body and body:find(m.cond, 1, true) then return i end
+	end
+end
+
+-- A damage spell picked while a friendly mode is showing flips to enemy, and a
+-- heal picked while enemy is showing flips back. Spells that are both (or
+-- neither), and the "any" mode, are left alone.
+local function suggestMode(spell, current)
+	local m = MODES[current]
+	if spell.harmful and not spell.helpful and m.friendly then return MODE_INDEX.harm end
+	if spell.helpful and not spell.harmful and m.key == "harm" then return MODE_INDEX.heal end
+	return current
+end
 
 -- ---------------------------------------------------------------------------
 -- spellbook
 -- ---------------------------------------------------------------------------
-local function isHelpful(spellID)
-	if not spellID or not (C_Spell and C_Spell.IsSpellHelpful) then return false end
-	local ok, v = pcall(C_Spell.IsSpellHelpful, spellID)
+local function spellFlag(fn, spellID)
+	if not spellID or not (C_Spell and C_Spell[fn]) then return false end
+	local ok, v = pcall(C_Spell[fn], spellID)
 	return ok and v and true or false
 end
 
@@ -89,7 +140,8 @@ local function playerSpells()
 	end
 
 	for _, e in ipairs(out) do
-		e.helpful = isHelpful(e.id)
+		e.helpful = spellFlag("IsSpellHelpful", e.id)
+		e.harmful = spellFlag("IsSpellHarmful", e.id)
 		e.ranks = {}
 		if #e.all > 1 then
 			for i, r in ipairs(e.all) do
@@ -121,22 +173,74 @@ local function splitRank(spell)
 	return spell, nil
 end
 
--- Macro names cap at 16 characters. Max rank: "HC Holy Light".
--- A specific rank: "HC Holy Light r1", or initials when the name won't fit
--- ("HC LHW r2" for Lesser Healing Wave, "HC BoM r3" for Blessing of Might).
-local function macroName(spell)
-	local base, sub = splitRank(spell)
-	if not sub then return (NAME_PREFIX .. spell):sub(1, 16) end
-	local suffix = " r" .. (sub:match("%d+") or sub:sub(1, 2))
-	local room = 16 - #NAME_PREFIX - #suffix
-	if #base > room then
-		base = (base:gsub("(%S)%S*%s*", "%1")):sub(1, room)
-	end
-	return NAME_PREFIX .. base .. suffix
+-- Cut to n bytes without leaving half a UTF-8 character on the end.
+local function cut(str, n)
+	if #str <= n then return str end
+	str = str:sub(1, n)
+	local i = #str
+	while i > 1 and str:byte(i) >= 0x80 and str:byte(i) < 0xC0 do i = i - 1 end
+	local lead = str:byte(i)
+	local need = (lead >= 0xF0 and 4) or (lead >= 0xE0 and 3) or (lead >= 0xC0 and 2) or 1
+	if #str - i + 1 < need then str = str:sub(1, i - 1) end
+	return str
 end
 
-local function macroBody(spell, mode)
-	return "#showtooltip " .. spell .. "\n/cast " .. mode.cond .. " " .. spell
+-- "Lesser Healing Wave" -> "LHW", "Blessing of Might" -> "BoM"
+local function initials(str)
+	return (str:gsub("([^%s\128-\191][\128-\191]*)%S*%s*", "%1"))
+end
+
+-- Macro names cap at 16 characters, so long spell names can collide:
+-- "Greater Blessing of Might" and "...of Kings" both cut to "HC Greater Bless".
+-- These are the names a spell may use, best first. The first one is what
+-- 1.2 always used ("HC Holy Light", "HC Holy Light r1", "HC LHW r2"), so
+-- macros made before keep being found.
+local function nameCandidates(spell)
+	local base, sub = splitRank(spell)
+	local suffix = sub and (" r" .. (sub:match("%d+") or cut(sub, 2))) or ""
+	local room = 16 - #NAME_PREFIX - #suffix
+	local short = cut(initials(base), room)
+	local list, seen = {}, {}
+	local function add(b)
+		local n = NAME_PREFIX .. b .. suffix
+		if b ~= "" and not seen[n] then seen[n] = true; list[#list + 1] = n end
+	end
+	if not sub or #base <= room then add(cut(base, room)) else add(short) end
+	add(short)
+	for i = 2, 9 do add(cut(short, room - 1) .. i) end   -- "HC BoS2" when BoS is taken
+	return list
+end
+
+local ATTACK_LINE = "/startattack [harm,nodead]"
+
+local function macroBody(spell, mode, attack)
+	return "#showtooltip " .. spell .. "\n"
+		.. (attack and (ATTACK_LINE .. "\n") or "")
+		.. "/cast " .. mode.cond .. " " .. spell
+end
+
+-- The spell a macro is for, from its #showtooltip line (nil if it has none).
+local function tooltipSpell(index)
+	local _, _, body = GetMacroInfo(index)
+	return body and body:match("#showtooltip ([^\n]+)")
+end
+
+local function sameSpell(a, b)
+	return a and b and strlower(strtrim(a)) == strlower(strtrim(b))
+end
+
+-- The macro this spell already has (name, index), else the first free name
+-- (name, nil). Never picks a name held by a macro for anything else.
+local function resolveName(spell)
+	local cands = nameCandidates(spell)
+	for _, n in ipairs(cands) do
+		local idx = GetMacroIndexByName(n)
+		if idx and idx > 0 and sameSpell(tooltipSpell(idx), spell) then return n, idx end
+	end
+	for _, n in ipairs(cands) do
+		local idx = GetMacroIndexByName(n)
+		if not idx or idx == 0 then return n, nil end
+	end
 end
 
 -- every macro of ours, read straight from the game
@@ -147,7 +251,8 @@ local function ourMacros()
 		if name and name:sub(1, #NAME_PREFIX) == NAME_PREFIX and body and body:find("@mouseover", 1, true) then
 			local spell = body:match("#showtooltip ([^\n]+)") or name:sub(#NAME_PREFIX + 1)
 			local keys = { GetBindingKey("MACRO " .. name) }
-			out[#out + 1] = { index = i, name = name, icon = icon, spell = spell, keys = keys }
+			out[#out + 1] = { index = i, name = name, icon = icon, spell = spell, keys = keys, mode = modeOf(body),
+				attack = body:find("/startattack", 1, true) ~= nil }
 		end
 	end
 	table.sort(out, function(a, b) return a.spell < b.spell end)
@@ -175,24 +280,22 @@ local function pickUp(name)
 end
 
 -- Create or update the macro. Returns ok, message.
-local function createMacro(spell, mode, icon)
+local function createMacro(spell, mode, icon, attack)
 	if InCombatLockdown() then return false, "can't change macros in combat." end
 	spell = spell and strtrim(spell) or ""
 	if spell == "" then return false, "pick a spell first." end
 	mode = mode or MODES[1]
 	icon = icon or spellIcon(spell)
 
-	local name, body = macroName(spell), macroBody(spell, mode)
+	local body = macroBody(spell, mode, attack)
 	if #body > 255 then return false, "that spell name makes the macro too long." end
 
-	local index = GetMacroIndexByName(name)
+	local name, index = resolveName(spell)
+	if not name then
+		return false, "every macro name HoverCast could give " .. spell .. " is already taken by other macros."
+	end
 	local ok, err, updated
-	if index and index > 0 then
-		local _, _, oldBody = GetMacroInfo(index)
-		local oldSpell = oldBody and oldBody:match("#showtooltip ([^\n]+)")
-		if oldSpell and oldSpell ~= spell then
-			return false, "the macro name \"" .. name .. "\" is already used by " .. oldSpell .. "."
-		end
+	if index then
 		ok, err = pcall(EditMacro, index, name, icon, body)
 		updated = true
 	else
@@ -209,9 +312,16 @@ end
 
 local function deleteOurs(m)
 	if InCombatLockdown() then return false, "can't change macros in combat." end
+	-- Positions shift whenever any macro is added or removed, so the index from
+	-- the list may be stale. Find it again by name and check it's still this spell.
+	local index = GetMacroIndexByName(m.name)
+	if not index or index == 0 then return false, m.spell .. " is already gone." end
+	if not sameSpell(tooltipSpell(index), m.spell) then
+		return false, "\"" .. m.name .. "\" isn't the " .. m.spell .. " macro any more; left it alone."
+	end
 	clearBindingsFor(m.name)
 	save()
-	local ok, err = pcall(DeleteMacro, m.index)
+	local ok, err = pcall(DeleteMacro, index)
 	if not ok then return false, "couldn't delete: " .. tostring(err) end
 	return true, "removed " .. m.spell .. "."
 end
@@ -299,7 +409,10 @@ local function build()
 	search:SetSize(200, 20); search:SetPoint("TOPRIGHT", -16, -42); search:SetAutoFocus(false)
 	search:SetScript("OnEscapePressed", function(s) s:SetText(""); s:ClearFocus() end)
 	search:SetScript("OnEnterPressed", function(s) s:ClearFocus() end)
-	search:SetScript("OnTextChanged", function() win.spellOffset = 0; win:RenderSpells() end)
+	search:SetScript("OnTextChanged", function(_, typed)
+		if typed then win.spellOffset = 0 end
+		win:RenderSpells()
+	end)
 	local ph = search:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 	ph:SetPoint("LEFT", 4, 0); ph:SetText("filter")
 	search:HookScript("OnTextChanged", function(s) ph:SetShown(s:GetText() == "") end)
@@ -329,6 +442,11 @@ local function build()
 				win.selected = self.spell.name
 				win.selectedIcon = self.spell.icon
 				win.selectedEntry = self.spell
+				local mode = suggestMode(self.spell, win.mode)
+				if mode ~= win.mode then
+					win.mode = mode
+					status("Targeting switched to " .. MODES[mode].short .. " for this spell.", true)
+				end
 				win:RenderSpells(); win:RenderPick()
 			end
 		end)
@@ -337,18 +455,77 @@ local function build()
 
 	-- 2. targeting -------------------------------------------------------
 	local h2 = win:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-	h2:SetPoint("TOPLEFT", list, "BOTTOMLEFT", 0, -14); h2:SetText("2. TARGETING  |cff606060(click to change)|r")
+	h2:SetPoint("TOPLEFT", list, "BOTTOMLEFT", 0, -14); h2:SetText("2. TARGETING  |cff606060(click to change, right-click to go back)|r")
 
-	local modeBtn = flatButton(win, "", 100, 26, function()
-		win.mode = (win.mode % #MODES) + 1
+	-- What each targeting option does: the current one explained, then all of them.
+	local function modeTooltip(owner)
+		local cur = MODES[win.mode]
+		GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+		GameTooltip:AddLine(cur.label, ACCENT[1], ACCENT[2], ACCENT[3])
+		GameTooltip:AddLine(cur.help, 1, 1, 1, true)
+		GameTooltip:AddLine("Good for: " .. cur.best, 0.75, 0.75, 0.75, true)
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("All options (click to cycle, right-click to go back):", 0.55, 0.55, 0.55, true)
+		for i, m in ipairs(MODES) do
+			if i == win.mode then
+				GameTooltip:AddDoubleLine("> " .. m.short, m.best, ACCENT[1], ACCENT[2], ACCENT[3], ACCENT[1], ACCENT[2], ACCENT[3])
+			else
+				GameTooltip:AddDoubleLine("   " .. m.short, m.best, 0.85, 0.85, 0.85, 0.55, 0.55, 0.55)
+			end
+		end
+		GameTooltip:Show()
+	end
+
+	local helpBtn = flatButton(win, "?", 26, 26)
+	helpBtn:SetPoint("TOP", h2, "BOTTOM", 0, -6); helpBtn:SetPoint("RIGHT", win, "RIGHT", -14, 0)
+	helpBtn.text:SetFontObject("GameFontNormal")
+	helpBtn:HookScript("OnEnter", modeTooltip)
+	helpBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
+
+	local modeBtn = flatButton(win, "", 100, 26, function(self, button)
+		local step = (button == "RightButton") and -1 or 1
+		win.mode = ((win.mode - 1 + step) % #MODES) + 1
+		win:RenderPick()
+		if GameTooltip:IsOwned(self) then modeTooltip(self) end
+	end)
+	modeBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+	modeBtn:SetPoint("TOPLEFT", h2, "BOTTOMLEFT", 0, -6); modeBtn:SetPoint("RIGHT", helpBtn, "LEFT", -6, 0)
+	modeBtn:HookScript("OnEnter", modeTooltip)
+	modeBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
+	win.modeBtn = modeBtn
+
+	local atk = CreateFrame("Button", nil, win)
+	atk:SetSize(300, 18); atk:SetPoint("TOPLEFT", modeBtn, "BOTTOMLEFT", 0, -8)
+	atk.box = CreateFrame("Frame", nil, atk, "BackdropTemplate")
+	atk.box:SetSize(14, 14); atk.box:SetPoint("LEFT", 1, 0)
+	atk.box:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+	atk.box:SetBackdropColor(0, 0, 0, 0.4); atk.box:SetBackdropBorderColor(1, 1, 1, 0.25)
+	atk.check = tex(atk.box, "ARTWORK", ACCENT[1], ACCENT[2], ACCENT[3], 1)
+	atk.check:SetPoint("TOPLEFT", 3, -3); atk.check:SetPoint("BOTTOMRIGHT", -3, 3)
+	atk.label = atk:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	atk.label:SetPoint("LEFT", atk.box, "RIGHT", 7, 0)
+	atk.label:SetText("Also start auto-attack  |cff707070/startattack|r")
+	atk:SetScript("OnClick", function()
+		win.startAttack = not win.startAttack
 		win:RenderPick()
 	end)
-	modeBtn:SetPoint("TOPLEFT", h2, "BOTTOMLEFT", 0, -6); modeBtn:SetPoint("RIGHT", win, "RIGHT", -14, 0)
-	win.modeBtn = modeBtn
+	atk:SetScript("OnEnter", function(self)
+		atk.box:SetBackdropBorderColor(ACCENT[1], ACCENT[2], ACCENT[3], 0.8)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:AddLine("Also start auto-attack", ACCENT[1], ACCENT[2], ACCENT[3])
+		GameTooltip:AddLine("Adds " .. ATTACK_LINE .. " above the cast. It turns on auto-attack against your current target when that target is a live enemy, and does nothing otherwise.", 1, 1, 1, true)
+		GameTooltip:AddLine("Works with any targeting option: heal a mouseover and keep swinging at the boss.", 0.75, 0.75, 0.75, true)
+		GameTooltip:Show()
+	end)
+	atk:SetScript("OnLeave", function()
+		atk.box:SetBackdropBorderColor(1, 1, 1, 0.25)
+		GameTooltip:Hide()
+	end)
+	win.atkBox = atk
 
 	-- preview + create ---------------------------------------------------
 	local preview = CreateFrame("Frame", nil, win, "BackdropTemplate")
-	preview:SetPoint("TOPLEFT", modeBtn, "BOTTOMLEFT", 0, -10); preview:SetPoint("RIGHT", win, "RIGHT", -14, 0); preview:SetHeight(40)
+	preview:SetPoint("TOPLEFT", atk, "BOTTOMLEFT", 0, -8); preview:SetPoint("RIGHT", win, "RIGHT", -14, 0); preview:SetHeight(62)
 	preview:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8" })
 	preview:SetBackdropColor(0, 0, 0, 0.35)
 	win.previewText = preview:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -357,7 +534,7 @@ local function build()
 
 	local function make(spell)
 		win.rankPick:Hide()
-		local ok, msg = createMacro(spell, MODES[win.mode], win.selectedIcon)
+		local ok, msg = createMacro(spell, MODES[win.mode], win.selectedIcon, win.startAttack)
 		status(msg, ok)
 		if ok then win:RenderMacros() end
 	end
@@ -395,11 +572,14 @@ local function build()
 	win.macroScroll = scrollBar(mlist)
 	win.macroRows = {}
 	for i = 1, MACRO_ROWS do
-		local r = CreateFrame("Frame", nil, mlist)
+		-- click the row itself to load that macro back into the editor
+		local r = CreateFrame("Button", nil, mlist)
 		r:SetHeight(ROW_H); r:SetPoint("TOPLEFT", 0, -2 - (i - 1) * ROW_H); r:SetPoint("RIGHT", mlist, "RIGHT", -8, 0)
 		r.bg = tex(r, "BACKGROUND", 1, 1, 1, (i % 2 == 0) and 0.03 or 0); r.bg:SetAllPoints()
+		r.hl = tex(r, "HIGHLIGHT", ACCENT[1], ACCENT[2], ACCENT[3], 0.10); r.hl:SetAllPoints()
 		r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(16, 16); r.icon:SetPoint("LEFT", 4, 0); r.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 		r.label = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); r.label:SetPoint("LEFT", r.icon, "RIGHT", 8, 0)
+		r:SetScript("OnClick", function(self) if self.macro then win:LoadMacro(self.macro) end end)
 		r.del = flatButton(r, "Remove", 58, 18)
 		r.del:SetPoint("RIGHT", -2, 0)
 		-- put an existing one back on the cursor, e.g. for a second bar
@@ -409,6 +589,9 @@ local function build()
 			else status("leave combat first.") end
 		end)
 		r.pick:SetPoint("RIGHT", r.del, "LEFT", -6, 0)
+		r.modeTag = r:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+		r.modeTag:SetPoint("RIGHT", r.pick, "LEFT", -8, 0)
+		r.label:SetPoint("RIGHT", r.modeTag, "LEFT", -6, 0); r.label:SetJustifyH("LEFT"); r.label:SetWordWrap(false)
 		r.del:SetScript("OnClick", function(self)
 			if not self.macro then return end
 			local ok, msg = deleteOurs(self.macro)
@@ -497,7 +680,8 @@ local function build()
 		local mode = MODES[self.mode]
 		self.modeBtn.text:SetText(mode.label)
 		local spell = self.selected or "<spell>"
-		self.previewText:SetText("|cff808080" .. macroBody(spell, mode):gsub("\n", "|n") .. "|r")
+		self.previewText:SetText("|cff808080" .. macroBody(spell, mode, self.startAttack):gsub("\n", "|n") .. "|r")
+		self.atkBox.check:SetShown(self.startAttack and true or false)
 		local e = self.selectedEntry
 		self.createBtn.text:SetText((e and e.name == self.selected and #e.ranks > 1) and "Create macro..." or "Create macro")
 	end
@@ -514,6 +698,8 @@ local function build()
 				r.icon:SetTexture(m.icon or 134400)
 				local base, sub = splitRank(m.spell)
 				r.label:SetText(sub and (base .. "  |cff808080" .. sub .. "|r") or m.spell)
+				r.modeTag:SetText((m.mode and MODES[m.mode].short or "edited") .. (m.attack and " + attack" or ""))
+				r.macro = m
 				r.del.macro = m
 				r.pick.macro = m
 				r:Show()
@@ -524,6 +710,23 @@ local function build()
 		self.emptyMacros:SetShown(#ms == 0)
 		self.macroCount:SetText(#ms > MACRO_ROWS and ("|cff606060(" .. #ms .. ", scroll for more)|r") or "")
 		self.macroScroll(#ms, MACRO_ROWS, off)
+	end
+
+	function win:LoadMacro(m)
+		local base = splitRank(m.spell)
+		self.selected, self.selectedEntry, self.selectedIcon = base, nil, m.icon
+		self.search:SetText("")
+		for i, s in ipairs(self.spells or {}) do
+			if strlower(s.name) == strlower(base) then
+				self.selected, self.selectedEntry, self.selectedIcon = s.name, s, s.icon
+				self.spellOffset = i - 1 - math.floor(SPELL_ROWS / 2)   -- clamped when drawn
+				break
+			end
+		end
+		if m.mode then self.mode = m.mode end
+		self.startAttack = m.attack
+		self:RenderSpells(); self:RenderPick()
+		status("Loaded " .. m.spell .. ": change the targeting, then Create.", true)
 	end
 
 	function win:Refresh()
@@ -567,6 +770,11 @@ end
 -- ---------------------------------------------------------------------------
 -- slash
 -- ---------------------------------------------------------------------------
+-- addon menu by the minimap (## AddonCompartmentFunc in the TOC)
+function HoverCast_OnAddonCompartmentClick()
+	SlashCmdList.HOVERCAST("")
+end
+
 SLASH_HOVERCAST1 = "/hover"
 SLASH_HOVERCAST2 = "/hovercast"
 SlashCmdList["HOVERCAST"] = function(msg)
