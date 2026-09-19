@@ -2,6 +2,9 @@
 
 ## 1.3.0 (2026-09-19)
 
+- Renamed from HoverCast to **HoverCraft** (CurseForge already has an addon called HoverCasts).
+  `/hover` and the `HC ...` macro names are unchanged, so existing macros keep working;
+  `/hovercraft` replaces `/hovercast`.
 - New targeting options: **tank** (mouseover > target > target's target > you: target the boss
   and it heals whoever the boss is hitting), **enemy** (for damage spells) and **resurrect**
   (dead friendly mouseover; the other options skip the dead).

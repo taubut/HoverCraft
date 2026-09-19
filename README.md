@@ -1,9 +1,9 @@
-# HoverCast
+# HoverCraft
 
 Mouseover macros for **WoW: Forever**, without typing them. Pick a spell, pick how it should
 target, click **Create macro**, and the macro lands on your cursor, ready to drop onto an action bar.
 
-![HoverCast making an Earth Shock macro with enemy targeting and auto-attack](screenshot.png)
+![HoverCraft making an Earth Shock macro with enemy targeting and auto-attack](screenshot.png)
 
 With the default targeting it writes this for you:
 
@@ -28,7 +28,7 @@ friendly target, heal yourself.
   at the boss.
 - **Targeting follows the spell.** Pick a damage spell and the targeting switches to enemy; pick a
   heal and it switches back.
-- **Your hover macros.** Every macro HoverCast made, with its targeting. **Pick up** puts it back on
+- **Your hover macros.** Every macro HoverCraft made, with its targeting. **Pick up** puts it back on
   your cursor (for a second bar), **Remove** deletes it, and clicking the row loads it back into the
   editor so you can change it.
 
@@ -46,20 +46,20 @@ friendly target, heal yourself.
 ### Why not Blizzard's Mouseover Cast setting?
 
 Forever has Blizzard's **Mouseover Cast** option in the combat settings. It turns every action
-button into "mouseover, otherwise target". HoverCast's macros are per spell, and they can fall
+button into "mouseover, otherwise target". HoverCraft's macros are per spell, and they can fall
 back to you, heal the boss's target, stay enemy-only or dead-only, pin a rank, and start
 auto-attack. The two work fine together.
 
 ## Install
 
-1. Download `HoverCast-x.y.z.zip` from the [Releases page](https://github.com/taubut/HoverCast/releases/latest).
-2. Extract it. You get a `HoverCast` folder, ready to go.
+1. Download `HoverCraft-x.y.z.zip` from the [Releases page](https://github.com/taubut/HoverCraft/releases/latest).
+2. Extract it. You get a `HoverCraft` folder, ready to go.
 3. Move that folder into your AddOns directory. For the Forever beta that is
    `World of Warcraft/_classic_beta_/Interface/AddOns/`.
-4. You should end up with `.../AddOns/HoverCast/HoverCast.toc`. Restart the game or `/reload`.
+4. You should end up with `.../AddOns/HoverCraft/HoverCraft.toc`. Restart the game or `/reload`.
 
 If you use GitHub's green **Code → Download ZIP** button instead, the folder comes out as
-`HoverCast-main` and you have to rename it to `HoverCast` yourself.
+`HoverCraft-main` and you have to rename it to `HoverCraft` yourself.
 
 The addon has no dependencies.
 
@@ -73,7 +73,7 @@ The addon has no dependencies.
 6. The macro is on your cursor: click an action bar slot to place it, then bind that slot to a key
    the way you normally would.
 
-Macros can't be created or changed in combat. That's a game rule, and HoverCast tells you when it
+Macros can't be created or changed in combat. That's a game rule, and HoverCraft tells you when it
 happens.
 
 ### Slash commands
@@ -84,19 +84,19 @@ happens.
 | `/hover Flash of Light` | Make that macro with the default targeting and put it on your cursor |
 | `/hover Holy Light(Rank 1)` | Same, for a specific rank |
 
-`/hovercast` works as well if `/hover` collides with another addon.
+`/hovercraft` works as well if `/hover` collides with another addon.
 
 ## Good to know
 
-- **Nothing is stored.** HoverCast has no saved settings. The macros are ordinary
-  character-specific macros, so they keep working if you disable or delete the addon. HoverCast
+- **Nothing is stored.** HoverCraft has no saved settings. The macros are ordinary
+  character-specific macros, so they keep working if you disable or delete the addon. HoverCraft
   finds its own by their name (`HC <spell>`) and the `@mouseover` in their text.
 - **Macro names.** The game caps macro names at 16 characters: `HC Holy Light`,
   `HC Holy Light r1` for a rank, initials like `HC GBoK` when a long name won't fit or is taken,
-  then `HC BoS2`. HoverCast never overwrites a macro that belongs to a different spell or one you
+  then `HC BoS2`. HoverCraft never overwrites a macro that belongs to a different spell or one you
   wrote yourself.
 - **Macro slots.** New macros go in your character-specific macro slots. If those are full,
-  HoverCast says so.
+  HoverCraft says so.
 - **Classic Era and TBC Anniversary** aren't supported. Their spellbook API is different, so the
   spell list would come up empty.
 

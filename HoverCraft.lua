@@ -1,5 +1,5 @@
 -- ============================================================================
--- HoverCast - mouseover macros without typing them.
+-- HoverCraft - mouseover macros without typing them.
 --
 -- Pick a spell, click Create. It writes a real per-character macro:
 --
@@ -30,7 +30,7 @@
 -- /hover Holy Light(Rank 1)     same, for a specific rank
 -- ============================================================================
 
-local PREFIX = "|cff4cc776HoverCast|r: "
+local PREFIX = "|cff4cc776HoverCraft|r: "
 local NAME_PREFIX = "HC "
 local MAX_SCAN = 150          -- 120 account + up to 30 character macro slots
 
@@ -292,7 +292,7 @@ local function createMacro(spell, mode, icon, attack)
 
 	local name, index = resolveName(spell)
 	if not name then
-		return false, "every macro name HoverCast could give " .. spell .. " is already taken by other macros."
+		return false, "every macro name HoverCraft could give " .. spell .. " is already taken by other macros."
 	end
 	local ok, err, updated
 	if index then
@@ -383,7 +383,7 @@ end
 
 local function build()
 	if win then return win end
-	win = CreateFrame("Frame", "HoverCastWindow", UIParent, "BackdropTemplate")
+	win = CreateFrame("Frame", "HoverCraftWindow", UIParent, "BackdropTemplate")
 	win:SetSize(460, 548); win:SetPoint("CENTER")   -- height is fitted to the content in OnShow
 	win:SetFrameStrata("DIALOG"); win:SetToplevel(true)
 	win:SetMovable(true); win:EnableMouse(true); win:SetClampedToScreen(true)
@@ -391,13 +391,13 @@ local function build()
 	win:SetScript("OnDragStart", win.StartMoving); win:SetScript("OnDragStop", win.StopMovingOrSizing)
 	win:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
 	win:SetBackdropColor(0.05, 0.06, 0.08, 0.97); win:SetBackdropBorderColor(ACCENT[1] * 0.6, ACCENT[2] * 0.6, ACCENT[3] * 0.6, 1)
-	tinsert(UISpecialFrames, "HoverCastWindow")
+	tinsert(UISpecialFrames, "HoverCraftWindow")
 	win.mode = 1
 
 	local bar = tex(win, "BACKGROUND", 1, 1, 1, 0.035); bar:SetPoint("TOPLEFT", 1, -1); bar:SetPoint("TOPRIGHT", -1, -1); bar:SetHeight(32)
 	local line = tex(win, "ARTWORK", ACCENT[1], ACCENT[2], ACCENT[3], 0.5); line:SetPoint("TOPLEFT", 1, -33); line:SetPoint("TOPRIGHT", -1, -33); line:SetHeight(1)
 	local title = win:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-	title:SetPoint("TOPLEFT", 14, -9); title:SetText("|cff4cc776HoverCast|r")
+	title:SetPoint("TOPLEFT", 14, -9); title:SetText("|cff4cc776HoverCraft|r")
 	local sub = win:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 	sub:SetPoint("LEFT", title, "RIGHT", 10, -1); sub:SetText("pick a spell, drop it on a bar")
 	local close = CreateFrame("Button", nil, win, "UIPanelCloseButton"); close:SetPoint("TOPRIGHT", -2, -2)
@@ -771,13 +771,13 @@ end
 -- slash
 -- ---------------------------------------------------------------------------
 -- addon menu by the minimap (## AddonCompartmentFunc in the TOC)
-function HoverCast_OnAddonCompartmentClick()
-	SlashCmdList.HOVERCAST("")
+function HoverCraft_OnAddonCompartmentClick()
+	SlashCmdList.HOVERCRAFT("")
 end
 
-SLASH_HOVERCAST1 = "/hover"
-SLASH_HOVERCAST2 = "/hovercast"
-SlashCmdList["HOVERCAST"] = function(msg)
+SLASH_HOVERCRAFT1 = "/hover"
+SLASH_HOVERCRAFT2 = "/hovercraft"
+SlashCmdList["HOVERCRAFT"] = function(msg)
 	msg = strtrim(msg or "")
 	if msg == "" then
 		build()
