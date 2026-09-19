@@ -3,7 +3,7 @@
 Mouseover macros for **WoW: Forever**, without typing them. Pick a spell, pick how it should
 target, click **Create macro**, and the macro lands on your cursor, ready to drop onto an action bar.
 
-![HoverCraft making an Earth Shock macro with enemy targeting and auto-attack](screenshot.png)
+![The HoverCraft window: spell list, targeting, preview and your hover macros](screenshot.png)
 
 With the default targeting it writes this for you:
 
