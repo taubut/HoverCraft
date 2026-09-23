@@ -1,5 +1,7 @@
 # HoverCraft
 
+[![Discord](https://img.shields.io/discord/1552365678751653928?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://discord.gg/eCtNeBqE8U)
+
 Mouseover macros for **WoW: Forever**, without typing them. Pick a spell, pick how it should
 target, click **Create macro**, and the macro lands on your cursor, ready to drop onto an action bar.
 
@@ -99,6 +101,10 @@ happens.
   HoverCraft says so.
 - **Classic Era and TBC Anniversary** aren't supported. Their spellbook API is different, so the
   spell list would come up empty.
+
+## Help and feedback
+
+Questions, bugs and ideas: the [ShamanPower Discord](https://discord.gg/eCtNeBqE8U) has a channel for every addon.
 
 ## License
 
